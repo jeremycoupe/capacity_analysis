@@ -5,173 +5,181 @@ import psycopg2
 import pandas.io.sql as psql
 
 
-bin_width = 1
-debug = True
-
 print('Attempting to connect to database')
-conn = psycopg2.connect("dbname='fuser' user='fuser' password='fuser' host='taint.arc.nasa.gov' ")
+conn = psycopg2.connect("dbname='fuserclt' user='fuserclt' password='fuserclt' host='localhost' ")
 
-runway_vector = ['18L' , '18C' , '18R' , '23' , '36L' , '36C' , '36R' , '5']
+def plot_rate(bank_date, bank_start_time):
+	date_st = bank_date + bank_start_time
+	print(date_st)
+	binsize = 5
+	minutes = 150
+	timestamp_0 = pd.Timestamp(date_st)
+	timestamp_1 = timestamp_0 + pd.Timedelta( str(minutes) + ' minutes')
 
-q = '''SELECT 
-*
-FROM
-scheduler_analysis
-order by msg_time DESC
-limit 1
-'''  
-df = psql.read_sql(q, conn)
-
-print(df)
-
-start_time = df.loc[0,'msg_time']
-
-bins = [start_time, pd.Timestamp(start_time) + pd.Timedelta(str(bin_width) + ' minutes')]
-
-cols = ['start_bin','end_bin',]
-for rwy in range(len(runway_vector)):
-	cols.append('departures_' + runway_vector[rwy])
-	cols.append('arrivals_' + runway_vector[rwy])
-	cols.append('departures_residual_' + runway_vector[rwy])
-	cols.append('arrivals_residual_' + runway_vector[rwy])
-dfRealized = pd.DataFrame(np.empty((1,len(cols)), dtype=object),columns=cols)
-
-cols = ['start_bin','end_bin',]
-for rwy in range(len(runway_vector)):
-	cols.append('departures_scheduled_' + runway_vector[rwy])
-	cols.append('arrivals_scheduled_' + runway_vector[rwy])
-
-dfScheduled = pd.DataFrame(np.empty((1,len(cols)), dtype=object),columns=cols)
-
-
-getSchedules = True
-
-while True:
-	if getSchedules:
-		q = '''SELECT 
-		*
-		FROM
-		scheduler_analysis
-		WHERE
-		msg_time = '%s'
-		'''%bins[-2]  
-		df = psql.read_sql(q, conn)
-		df.to_csv('scheduler_analysis_data.csv')
-
-		for rwy in range(len(runway_vector)):
-			df_sched_dept = df[ (df['general_stream'] == 'DEPARTURE')\
-			& ( df['runway'] == runway_vector[rwy] )\
-			& ( df['runway_sta'] > bins[-2] )\
-			& ( df['runway_sta'] <= bins[-1] ) ]
-
-			df_sched_arv = df[ (df['general_stream'] == 'ARRIVAL')\
-			& ( df['runway'] == runway_vector[rwy] )\
-			& ( df['runway_sta'] > bins[-2] )\
-			& ( df['runway_sta'] <= bins[-1] ) ]
-
-			dfScheduled.loc[len(bins)-2,'start_bin'] = bins[-2]
-			dfScheduled.loc[len(bins)-2,'end_bin'] = bins[-1]
-			dfScheduled.loc[len(bins)-2,'departures_scheduled_' + runway_vector[rwy]] = len(df_sched_dept['flight_key'])
-			dfScheduled.loc[len(bins)-2,'arrivals_scheduled_' + runway_vector[rwy]] = len(df_sched_arv['flight_key'])
-			getSchedules = False
-
-	
+	line_width_var = 2
 
 	q = '''SELECT 
-	msg_time
+	*
 	FROM
 	scheduler_analysis
-	order by msg_time DESC
-	limit 1
-	'''  
-	df_msg_time = psql.read_sql(q, conn)
-	current_time = df_msg_time.loc[0,'msg_time']
-	if  ( pd.Timedelta(pd.Timestamp(current_time) - pd.Timestamp(bins[-1])).total_seconds() / float(60) ) < 0:
-		
+	where msg_time > '%s'
+	and msg_time < '%s'
+	order by msg_time ASC
+	''' %(timestamp_0,timestamp_1)  
+	df_sched = psql.read_sql(q, conn)
+	print('Got Scheduler Data')
 
-		t0 = pd.Timestamp(start_time) - pd.Timedelta('30 minutes')
+	if len(df_sched) > 0:
+
 		q = '''SELECT 
-		gufi,
-		departure_runway_actual_time,
-		departure_runway_position_derived,
-		departure_aerodrome_iata_name,
-		arrival_runway_actual_time,
-		COALESCE( arrival_runway_assigned , arrival_runway_position_derived) as arrival_runway,
-		arrival_aerodrome_iata_name
+		gufi, departure_runway_actual_time, departure_runway_position_derived
 		FROM
-		matm_flight_summary mfs
-		WHERE
-		mfs.timestamp > '%s'
-		'''%(t0)
-		dfMATM = psql.read_sql(q, conn)
+		matm_flight_summary
+		where departure_runway_actual_time is not null 
+		and departure_runway_position_derived is not null
+		and departure_runway_actual_time > '%s'
+		and departure_runway_actual_time < '%s'
+		''' %(timestamp_0,timestamp_1)  
+		df_matm_dept = psql.read_sql(q, conn)
+		print('Got Departure Data')
 
-		for bin_number in range(len(bins)-1):
-			for rwy in range(len(runway_vector)):
-				df_dept = dfMATM[ (dfMATM['departure_aerodrome_iata_name'] == 'CLT')\
-				&( dfMATM['departure_runway_actual_time'] > bins[bin_number] )\
-				&( dfMATM['departure_runway_actual_time'] <= bins[bin_number+1])\
-				&( dfMATM['departure_runway_position_derived'] == runway_vector[rwy]  )]
-			
 
-				df_arv = dfMATM[ (dfMATM['arrival_aerodrome_iata_name'] == 'CLT')\
-				&( dfMATM['arrival_runway_actual_time'] > bins[bin_number] )\
-				&( dfMATM['arrival_runway_actual_time'] <= bins[bin_number+1])\
-				&( dfMATM['arrival_runway'] == runway_vector[rwy]  )]
+		q = '''SELECT 
+		gufi, arrival_runway_actual_time,
+		COALESCE( arrival_runway_assigned , arrival_runway_position_derived) as arrival_runway
+		FROM
+		matm_flight_summary
+		where
+		arrival_runway_actual_time is not null
+		and COALESCE( arrival_runway_assigned , arrival_runway_position_derived) is not null
+		and arrival_runway_actual_time > '%s'
+		and arrival_runway_actual_time < '%s'
+		''' %(timestamp_0,timestamp_1)  
+		df_matm_arv = psql.read_sql(q, conn)
+		print('Got Arrival Data')
 
-			
-				dfRealized.loc[bin_number,'start_bin'] = bins[bin_number]
-				dfRealized.loc[bin_number,'end_bin'] = bins[bin_number+1]
-				dfRealized.loc[bin_number,'departures_' + runway_vector[rwy]] = len(df_dept['gufi'])
-				dfRealized.loc[bin_number,'arrivals_' + runway_vector[rwy]] = len(df_arv['gufi'])
-				dfRealized.loc[bin_number,'departures_residual_' + runway_vector[rwy]] = dfScheduled.loc[bin_number,'departures_scheduled_' + runway_vector[rwy]] - len(df_dept['gufi'])
-				dfRealized.loc[bin_number,'arrivals_residual_' + runway_vector[rwy]] = dfScheduled.loc[bin_number,'arrivals_scheduled_' + runway_vector[rwy]] - len(df_arv['gufi'])
 
-		print(current_time)
-		print('SCHEDULED')
-		print(dfScheduled)
-		print('REALIZED')
-		print(dfRealized)
+		all_runways = df_matm_dept['departure_runway_position_derived'].unique()
+		print(all_runways)
+		all_runways = np.append(all_runways,df_matm_arv['arrival_runway'].unique())
+		print(all_runways)
 
-		for rwy in range(len(runway_vector)):
-			num = dfScheduled[ 'departures_scheduled_' + runway_vector[rwy]  ].sum() + dfScheduled[ 'arrivals_scheduled_' + runway_vector[rwy]  ].sum() \
-			+ dfRealized[ 'departures_' + runway_vector[rwy]  ].sum() + dfRealized[ 'arrivals_' + runway_vector[rwy]  ].sum()
-			if num > 0:
-				plt.figure(rwy,figsize=(12,10))		
-				plt.subplot(2,1,1)
-				plt.cla()
-				ax = plt.gca()
-				print('PLOTTING ON')
-				print(runway_vector[rwy])
-				print(dfScheduled['departures_scheduled_' + runway_vector[rwy]])
-				print(dfScheduled['arrivals_scheduled_' + runway_vector[rwy]])
-				dfScheduled.plot(x='start_bin',y = 'departures_scheduled_' + runway_vector[rwy] , marker = 'o',ms=7, alpha = 0.6, color = 'green',ax=ax)
-				dfScheduled.plot(x='start_bin',y = 'arrivals_scheduled_' + runway_vector[rwy] , marker = 'o',ms=7, alpha = 0.6, color = 'blue',ax=ax)
-				dfRealized.plot(x='start_bin',y = 'departures_' + runway_vector[rwy] , style= '--', marker = 's',ms=10, alpha = 0.6, color = 'green',ax=ax)
-				dfRealized.plot(x='start_bin',y = 'arrivals_' + runway_vector[rwy] , style= '--', marker = 's',ms=10, alpha = 0.6, color = 'blue',ax=ax)
+		msg_time_vec = df_sched['msg_time'].unique()
+		bin_edges = []
+		x_tick_vec = []
+		for ts in range(len(msg_time_vec)):
+			if ts % 30 == 0:
+				bin_edges.append(str(msg_time_vec[ts]).split('.')[0])
+				x_tick_vec.append(str(msg_time_vec[ts]).split('.')[0].replace('T' , ' '))
+				print(str(msg_time_vec[ts]).split('.')[0])
 
-				plt.subplot(2,1,2)
-				plt.cla()
-				ax = plt.gca()
-				
-				dfRealized.plot.bar(x='start_bin',y = 'departures_residual_' + runway_vector[rwy] ,alpha = 0.6, color = 'green',ax=ax)
-				dfRealized.plot.bar(x='start_bin',y = 'arrivals_residual_' + runway_vector[rwy] , alpha = 0.6, color = 'blue',ax=ax)
-				plt.xticks(rotation=0)
-				plt.ylim([-bin_width,bin_width])
 
-				plt.tight_layout()
+		all_runways = np.unique(all_runways)
 
-		plt.show(block=False)
-		plt.pause(0.1)
-		if debug:
-			dfScheduled.to_csv('scheduled.csv')
-			dfRealized.to_csv('realized.csv')
+		for rwy in range(len(all_runways)):
+			plt.figure(figsize = (12,10))
 
+			plt_scheduled_dept = np.zeros(len(bin_edges))
+			plt_realized_dept = np.zeros(len(bin_edges))
+			plt_residual_dept = np.zeros(len(bin_edges))
+			plt_scheduled_arv = np.zeros(len(bin_edges))
+			plt_realized_arv = np.zeros(len(bin_edges))
+			plt_residual_arv = np.zeros(len(bin_edges))
+			for bin in range(len(bin_edges)):
+				###### Calculate departure data
+				plt_scheduled_dept[bin] = len( df_sched[ (df_sched['msg_time'] ==  bin_edges[bin]) \
+				& (df_sched['general_stream'] == 'DEPARTURE') \
+				& (df_sched['runway'] == all_runways[rwy]) \
+				& (df_sched['runway_sta'] > pd.Timestamp(bin_edges[bin])) \
+				& (df_sched['runway_sta'] < pd.Timestamp(bin_edges[bin]) + pd.Timedelta( str(binsize) + ' minutes')  )     ])
+
+				plt_realized_dept[bin] = len(df_matm_dept[ (df_matm_dept['departure_runway_position_derived'] == all_runways[rwy]) \
+				&(df_matm_dept['departure_runway_actual_time'] > pd.Timestamp(bin_edges[bin])) \
+				&(df_matm_dept['departure_runway_actual_time'] < pd.Timestamp(bin_edges[bin]) + pd.Timedelta( str(binsize) + ' minutes')  )     ])
+
+				plt_residual_dept[bin] = plt_scheduled_dept[bin] - plt_realized_dept[bin]
+
+				###### Calculate arrival data
+				plt_scheduled_arv[bin] = len( df_sched[ (df_sched['msg_time'] ==  bin_edges[bin]) \
+				& (df_sched['general_stream'] == 'ARRIVAL') \
+				& (df_sched['runway'] == all_runways[rwy]) \
+				& (df_sched['runway_sta'] > pd.Timestamp(bin_edges[bin])) \
+				& (df_sched['runway_sta'] < pd.Timestamp(bin_edges[bin]) + pd.Timedelta( str(binsize) + ' minutes')  )     ])
+
+				plt_realized_arv[bin] = len(df_matm_arv[ (df_matm_arv['arrival_runway'] == all_runways[rwy]) \
+				&(df_matm_arv['arrival_runway_actual_time'] > pd.Timestamp(bin_edges[bin])) \
+				&(df_matm_arv['arrival_runway_actual_time'] < pd.Timestamp(bin_edges[bin]) + pd.Timedelta( str(binsize) + ' minutes')  )     ])
+
+				plt_residual_arv[bin] = plt_scheduled_arv[bin] - plt_realized_arv[bin]
+
+			#### plot departures
+			plt.plot(plt_scheduled_dept,'--',label='scheduled departures',linewidth=line_width_var ,marker='o',color='blue',alpha=0.8)
+			plt.plot(plt_realized_dept,'-',label='realized departures',linewidth=line_width_var ,marker='o',color='blue',alpha=0.8)
+			plt.bar(np.arange(len(plt_residual_dept)),plt_residual_dept,label='scheduled - realized departures',color='blue',alpha=0.4)
+
+			##### plot arrivals
+			plt.plot(plt_scheduled_arv,'--',label='scheduled arrivals',linewidth=line_width_var ,marker='s',color='grey',alpha=0.8)
+			plt.plot(plt_realized_arv,'-',label='realized arrivals',linewidth=line_width_var ,marker='s',color='grey',alpha=0.8)
+			plt.bar(np.arange(len(plt_residual_arv)),plt_residual_arv,label='scheduled - realized arrivals',color='grey',alpha=0.4)
+
+
+			plt.title('Runway ' + all_runways[rwy] + ' Runway Rate Analysis')
+			plt.xticks(np.arange(len(plt_residual_dept)),x_tick_vec,fontsize=6,rotation=90)
+			plt.legend(fontsize=12,loc='lower right')
+			plt.ylim([-(binsize+1),(binsize+1)])
+			plt.tight_layout()
+			tmp_st = date_st.replace(' ','_')
+			plt.savefig('figs/' + tmp_st.replace(':','.') + '_' + all_runways[rwy] + '_rate_analysis.png')
+			plt.close('all')
+
+
+date_vec = []
+time_vec = []
+
+for i in range(2,32):
+	if i < 10:
+		num = '0' + str(i)
 	else:
-		bins.append( pd.Timestamp(bins[-1]) + pd.Timedelta(str(bin_width) + ' minutes') )
-		getSchedules = True
-	
+		num = str(i)
+	date_vec.append('2018-01-' + num )
+	time_vec.append(' 14:00:00')
+
+for i in range(1,29):
+	if i < 10:
+		num = '0' + str(i)
+	else:
+		num = str(i)
+	date_vec.append('2018-02-' + num )
+	time_vec.append(' 14:00:00')
+
+for i in range(1,12):
+	if i < 10:
+		num = '0' + str(i)
+	else:
+		num = str(i)
+	date_vec.append('2018-03-' + num )
+	time_vec.append(' 14:00:00')
 
 
 
-		
+for i in range(12,32):
+	if i < 10:
+		num = '0' + str(i)
+	else:
+		num = str(i)
+	date_vec.append('2018-03-' + num )
+	time_vec.append(' 13:00:00')
+
+
+for i in range(1,19):
+	if i < 10:
+		num = '0' + str(i)
+	else:
+		num = str(i)
+	date_vec.append('2018-04-' + num )
+	time_vec.append(' 13:00:00')
+
+for d in range(len(date_vec)):
+	plot_rate(date_vec[d],time_vec[d])
+
 
