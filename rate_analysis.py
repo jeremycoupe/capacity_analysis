@@ -59,7 +59,7 @@ def plot_rate(bank_date, bank_start_time,all_residual_dept,all_residual_arv,rwy_
 	scheduler_analysis
 	where msg_time > '%s'
 	and msg_time < '%s'
-	--and gate not in ('GA1','GA2','SC1','AC1')
+	and gate not in ('GA1','GA2','SC1','AC1')
 	order by msg_time ASC
 	''' %(timestamp_0,timestamp_1)  
 	df_sched = psql.read_sql(q, conn)
@@ -78,7 +78,7 @@ def plot_rate(bank_date, bank_start_time,all_residual_dept,all_residual_arv,rwy_
 		and departure_runway_position_derived is not null
 		and departure_runway_actual_time > '%s'
 		and departure_runway_actual_time < '%s'
-		--and departure_stand_decision_tree not in ('GA1','GA2','SC1','AC1')
+		and COALESCE( departure_stand_airline, departure_stand_decision_tree) not in ('GA1','GA2','SC1','AC1')
 		''' %(timestamp_0,timestamp_1)  
 		df_matm_dept = psql.read_sql(q, conn)
 		print('Got Departure Data')
@@ -95,7 +95,7 @@ def plot_rate(bank_date, bank_start_time,all_residual_dept,all_residual_arv,rwy_
 		and COALESCE( arrival_runway_assigned , arrival_runway_position_derived) is not null
 		and arrival_runway_actual_time > '%s'
 		and arrival_runway_actual_time < '%s'
-		--and arrival_stand_decision_tree not in ('GA1','GA2','SC1','AC1')
+		and COALESCE( arrival_stand_airline ,arrival_stand_decision_tree) not in ('GA1','GA2','SC1','AC1')
 		''' %(timestamp_0,timestamp_1)  
 		df_matm_arv = psql.read_sql(q, conn)
 		print('Got Arrival Data')
@@ -234,7 +234,7 @@ def plot_rate(bank_date, bank_start_time,all_residual_dept,all_residual_arv,rwy_
 
 				plt.tight_layout()
 				tmp_st = date_st.replace(' ','_')
-				plt.savefig('figs/' + tmp_st.replace(':','.') + '_' + all_runways[rwy] + '_' + str(binsize)+ '_binsize_rate_analysis_v5.png')
+				plt.savefig('figs/' + tmp_st.replace(':','.') + '_' + all_runways[rwy] + '_' + str(binsize)+ '_binsize_rate_analysis_v6.png')
 				#plt.show()
 				plt.close('all')
 
@@ -325,8 +325,8 @@ for rwy in range(len(rwy_key)):
 
 	plt.figure(figsize = (12,10))
 	ax1 = plt.subplot2grid((2,4), (0,0), colspan=4)
-	plt.plot(mean_vec,'-',label='mean departure residual',linewidth=2 ,marker='o',color='blue',alpha=0.8)
-	plt.plot(mean_vec_arv,'-',label='mean arrival residual',linewidth=2 ,marker='o',color='grey',alpha=0.8)
+	plt.plot(mean_vec,'-',label='mean departure error (scheduled - realized)',linewidth=2 ,marker='o',color='blue',alpha=0.8)
+	plt.plot(mean_vec_arv,'-',label='mean arrival error (scheduled - realized)',linewidth=2 ,marker='o',color='grey',alpha=0.8)
 	plt.fill_between( np.arange(len(mean_vec)) , mean_vec + std_vec , mean_vec - std_vec,color='blue',alpha=0.2)
 	plt.fill_between( np.arange(len(mean_vec_arv)) , mean_vec_arv + std_vec_arv , mean_vec_arv - std_vec_arv,color='grey',alpha=0.2)
 	
@@ -363,7 +363,7 @@ for rwy in range(len(rwy_key)):
 
 
 
-	plt.savefig(rwy_key[rwy]+ '_' + str(binsize) + '_all_rate_data_v5.png')
+	plt.savefig(rwy_key[rwy]+ '_' + str(binsize) + '_all_rate_data_v6.png')
 
 
 
